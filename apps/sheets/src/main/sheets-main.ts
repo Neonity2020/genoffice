@@ -2113,9 +2113,12 @@ const ENV_CONFIGURED_API_KEY = 'configured-by-environment'
 
 /** Keep the OpenAI development key in the main process, never in renderer settings. */
 function openAiDevelopmentKey(): string | undefined {
-  if (process.env.GENOFFICE_AI_PROVIDER !== 'openai') return undefined
   const key = process.env.OPENAI_API_KEY?.trim()
   return key || undefined
+}
+
+function usesOpenAiDevelopmentProvider(): boolean {
+  return process.env.GENOFFICE_AI_PROVIDER === 'openai'
 }
 
 export function registerSheetsAiIpc(): void {
@@ -2127,11 +2130,11 @@ export function registerSheetsAiIpc(): void {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
     const openAiKey = openAiDevelopmentKey()
-    if (openAiKey) {
+    if (usesOpenAiDevelopmentProvider()) {
       settings.provider = 'openai'
       settings.providers.openai = {
         ...settings.providers.openai,
-        apiKey: ENV_CONFIGURED_API_KEY,
+        apiKey: openAiKey ? ENV_CONFIGURED_API_KEY : '',
       }
     } else {
       // AI features all go through Genspark (gsk login); legacy settings that chose
@@ -2167,7 +2170,7 @@ export function registerSheetsAiIpc(): void {
     sessionFor(event)
     const request = aiChatRequestSchema.parse(input)
     const openAiKey = openAiDevelopmentKey()
-    const provider = (openAiKey ? 'openai' : request.settings.provider) as AiProviderId
+    const provider = (usesOpenAiDevelopmentProvider() ? 'openai' : request.settings.provider) as AiProviderId
     let config = request.settings.providers[provider]
     if (openAiKey && config) {
       config = { ...config, apiKey: openAiKey }
@@ -2195,7 +2198,7 @@ export function registerSheetsAiIpc(): void {
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
     const openAiKey = openAiDevelopmentKey()
-    const provider = (openAiKey ? 'openai' : request.settings.provider) as AiProviderId
+    const provider = (usesOpenAiDevelopmentProvider() ? 'openai' : request.settings.provider) as AiProviderId
     let config = request.settings.providers[provider]
     if (openAiKey && config) {
       config = { ...config, apiKey: openAiKey }

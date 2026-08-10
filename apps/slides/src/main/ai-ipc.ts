@@ -63,9 +63,12 @@ const ENV_CONFIGURED_API_KEY = 'configured-by-environment'
  * non-secret marker so they know that an AI provider is configured.
  */
 function openAiDevelopmentKey(): string | undefined {
-  if (process.env.GENOFFICE_AI_PROVIDER !== 'openai') return undefined
   const key = process.env.OPENAI_API_KEY?.trim()
   return key || undefined
+}
+
+function usesOpenAiDevelopmentProvider(): boolean {
+  return process.env.GENOFFICE_AI_PROVIDER === 'openai'
 }
 
 export function registerAiIpc(): void {
@@ -73,11 +76,11 @@ export function registerAiIpc(): void {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(AI_SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
     const openAiKey = openAiDevelopmentKey()
-    if (openAiKey) {
+    if (usesOpenAiDevelopmentProvider()) {
       settings.provider = 'openai'
       settings.providers.openai = {
         ...settings.providers.openai,
-        apiKey: ENV_CONFIGURED_API_KEY,
+        apiKey: openAiKey ? ENV_CONFIGURED_API_KEY : '',
       }
     } else {
       // AI features all go through Genspark (gsk login); stored settings that chose another provider are normalized back
@@ -110,7 +113,7 @@ export function registerAiIpc(): void {
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
     const openAiKey = openAiDevelopmentKey()
-    const provider = openAiKey ? 'openai' : settings.provider
+    const provider = usesOpenAiDevelopmentProvider() ? 'openai' : settings.provider
     let config = settings.providers?.[provider]
     if (openAiKey && config) {
       config = { ...config, apiKey: openAiKey }
