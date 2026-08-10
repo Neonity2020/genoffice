@@ -55,12 +55,34 @@ function writeJson(path: string, value: unknown): void {
 
 const activeAiStreams = new Map<string, AbortController>()
 
+const ENV_CONFIGURED_API_KEY = 'configured-by-environment'
+
+/**
+ * Local-development override for exercising the suite against the OpenAI API.
+ * The actual key remains in the main process environment; renderers only see a
+ * non-secret marker so they know that an AI provider is configured.
+ */
+function openAiDevelopmentKey(): string | undefined {
+  if (process.env.GENOFFICE_AI_PROVIDER !== 'openai') return undefined
+  const key = process.env.OPENAI_API_KEY?.trim()
+  return key || undefined
+}
+
 export function registerAiIpc(): void {
   ipcMain.handle('ai:get-settings', (): AiSettings => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(AI_SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
-    // AI features all go through Genspark (gsk login); stored settings that chose another provider are normalized back
-    settings.provider = 'genspark'
+    const openAiKey = openAiDevelopmentKey()
+    if (openAiKey) {
+      settings.provider = 'openai'
+      settings.providers.openai = {
+        ...settings.providers.openai,
+        apiKey: ENV_CONFIGURED_API_KEY,
+      }
+    } else {
+      // AI features all go through Genspark (gsk login); stored settings that chose another provider are normalized back
+      settings.provider = 'genspark'
+    }
     return settings
   })
 
@@ -87,10 +109,13 @@ export function registerAiIpc(): void {
     const { requestId, settings, system, messages } = request
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
-    const provider = settings.provider
+    const openAiKey = openAiDevelopmentKey()
+    const provider = openAiKey ? 'openai' : settings.provider
     let config = settings.providers?.[provider]
-    // The genspark key never enters the settings file; it is fetched from the gsk login state per request
-    if (provider === 'genspark' && config && !config.apiKey) {
+    if (openAiKey && config) {
+      config = { ...config, apiKey: openAiKey }
+    } else if (provider === 'genspark' && config && !config.apiKey) {
+      // The genspark key never enters the settings file; it is fetched from the gsk login state per request
       config = { ...config, apiKey: gskApiKey() }
     }
     const send = (chunk: AiStreamChunk) => {

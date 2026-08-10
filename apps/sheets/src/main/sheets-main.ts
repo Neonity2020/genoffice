@@ -2109,6 +2109,15 @@ export function registerSheetsIpc(): void {
 
 let aiIpcRegistered = false
 
+const ENV_CONFIGURED_API_KEY = 'configured-by-environment'
+
+/** Keep the OpenAI development key in the main process, never in renderer settings. */
+function openAiDevelopmentKey(): string | undefined {
+  if (process.env.GENOFFICE_AI_PROVIDER !== 'openai') return undefined
+  const key = process.env.OPENAI_API_KEY?.trim()
+  return key || undefined
+}
+
 export function registerSheetsAiIpc(): void {
   if (aiIpcRegistered) return
   aiIpcRegistered = true
@@ -2117,9 +2126,18 @@ export function registerSheetsAiIpc(): void {
     sessionFor(event)
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
-    // AI features all go through Genspark (gsk login); legacy settings that chose
-    // another provider are reset
-    settings.provider = 'genspark'
+    const openAiKey = openAiDevelopmentKey()
+    if (openAiKey) {
+      settings.provider = 'openai'
+      settings.providers.openai = {
+        ...settings.providers.openai,
+        apiKey: ENV_CONFIGURED_API_KEY,
+      }
+    } else {
+      // AI features all go through Genspark (gsk login); legacy settings that chose
+      // another provider are reset
+      settings.provider = 'genspark'
+    }
     return settings
   })
 
@@ -2148,9 +2166,12 @@ export function registerSheetsAiIpc(): void {
   ipcMain.handle(IPC_CHANNELS.aiChat, async (event, input: unknown) => {
     sessionFor(event)
     const request = aiChatRequestSchema.parse(input)
-    const provider = request.settings.provider as AiProviderId
+    const openAiKey = openAiDevelopmentKey()
+    const provider = (openAiKey ? 'openai' : request.settings.provider) as AiProviderId
     let config = request.settings.providers[provider]
-    if (provider === 'genspark' && config && !config.apiKey) {
+    if (openAiKey && config) {
+      config = { ...config, apiKey: openAiKey }
+    } else if (provider === 'genspark' && config && !config.apiKey) {
       config = { ...config, apiKey: gskApiKey() }
     }
     if (!config?.apiKey) {
@@ -2173,11 +2194,14 @@ export function registerSheetsAiIpc(): void {
     const { requestId, system, messages } = request
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
-    const provider = request.settings.provider as AiProviderId
+    const openAiKey = openAiDevelopmentKey()
+    const provider = (openAiKey ? 'openai' : request.settings.provider) as AiProviderId
     let config = request.settings.providers[provider]
-    // Genspark's key never enters the settings file; it is read from the gsk
-    // login state per request
-    if (provider === 'genspark' && config && !config.apiKey) {
+    if (openAiKey && config) {
+      config = { ...config, apiKey: openAiKey }
+    } else if (provider === 'genspark' && config && !config.apiKey) {
+      // Genspark's key never enters the settings file; it is read from the gsk
+      // login state per request
       config = { ...config, apiKey: gskApiKey() }
     }
     const send = (chunk: AiStreamChunk) => {
