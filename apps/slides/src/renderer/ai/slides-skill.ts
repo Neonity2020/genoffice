@@ -70,7 +70,7 @@ export interface DeckAccess {
   /** Replace the whole deck (after adding/removing slides) and jump to the goTo slide */
   applyDeck(slides: RenderSlide[], goTo?: number): void
   /** Local editable deck template writer; used when cloud slide generation is unavailable. */
-  generateNativeDeck?(pages: Array<Record<string, unknown>>, deckName: string): Promise<{ ok: boolean; done: number; error?: string }>
+  generateNativeDeck?(pages: Array<Record<string, unknown>>, deckName: string): Promise<{ ok: boolean; done: number; path?: string; error?: string }>
   /**
    * Generation progress callback (optional): called by generate_deck stages; the UI updates
    * the progress card and top progress bar in real time. Passed only through renderer
@@ -2678,7 +2678,7 @@ async function executeTool(
         if (state?.pageDone) state.pageDone.fill(true)
         access.onProgress?.({ stage: 'done', total, summary: `${native.done}/${total} pages generated locally` })
         return {
-          output: `Generated ${native.done}/${total} editable slides locally without cloud slide generation.`,
+          output: `Generated ${native.done}/${total} editable slides locally without cloud slide generation.${native.path ? ` Saved to ${native.path}.` : ''}`,
           mutated: true,
           summary: t('aiSumDeckGenerated', { done: native.done, total }),
         }

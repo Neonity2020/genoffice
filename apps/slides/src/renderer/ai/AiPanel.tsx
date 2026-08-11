@@ -847,7 +847,11 @@ export function AiPanel({
             await add('textbox', 104, 218, 1072, 300, brief)
             await add('textbox', 72, 650, 500, 28, `${i + 1} / ${pages.length}`)
           }
-          return { ok: true, done: pages.length }
+          const saved = await window.slidesApi.save()
+          if (!saved?.ok) throw new Error(saved?.error ?? 'Could not save generated presentation')
+          if (saved.path) onPathChangeRef.current?.(saved.path)
+          if (saved.slides) applyDeckRef.current(saved.slides, 0)
+          return { ok: true, done: pages.length, path: saved.path }
         } catch (error) {
           return { ok: false, done: 0, error: error instanceof Error ? error.message : String(error) }
         }
