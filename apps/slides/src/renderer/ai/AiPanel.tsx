@@ -877,32 +877,6 @@ export function AiPanel({
           return { ok: false, error: e instanceof Error ? e.message : String(e) }
         }
       },
-      generatePageHtml: async (args) => {
-        const imageList = args.images.length ? `Image URLs (use only when relevant):\n${args.images.join('\n')}` : ''
-        const reference = args.context
-          ? `Reference material — preserve only supported facts and figures:\n${args.context.slice(0, 6000)}`
-          : ''
-        const system = [
-          'You are a presentation designer. Return one complete HTML document only, with no Markdown or explanation.',
-          'Canvas is exactly 1280x720. Use inline CSS, semantic text, divs, SVG-free charts made from CSS, and ordinary img tags for supplied HTTPS images.',
-          'Create a polished editable business slide. Do not use scripts, canvas, external fonts, data URIs, or invented numerical facts.',
-        ].join('\n')
-        const user = [
-          `Deck topic: ${args.topic ?? ''}`,
-          `Page ${args.pageIndex} of ${args.totalPages}; title: ${args.title}`,
-          `Core hook: ${args.coreHook}`,
-          `Design system: ${args.style}`,
-          `Layout: ${args.layout}`,
-          `Content brief: ${args.brief}`,
-          reference,
-          imageList,
-        ].filter(Boolean).join('\n\n')
-        const result = await runLlmOnce(system, user, IPC_STREAM_SILENCE_TIMEOUT_MS, true, args.signal, 12_000)
-        if (!result.ok || !result.text) return { ok: false, error: result.error ?? tGlobal('aiErrEmptyOutput') }
-        const fenced = result.text.match(/```(?:html)?\s*([\s\S]*?)```/i)?.[1]
-        const html = (fenced ?? result.text).trim()
-        return /<html[\s>]/i.test(html) ? { ok: true, html } : { ok: false, error: 'Local model did not return a complete HTML document' }
-      },
       regenerateSlide: async (slideIndex: number, html: string) => {
         try {
           const res = await window.slidesApi.htmlToPptx(
