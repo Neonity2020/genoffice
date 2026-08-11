@@ -37,14 +37,10 @@ import { parseFileToText } from '@genoffice/file-parse'
 import {
   AiCreditsError,
   AiTimeoutError,
-  CODEX_BRIDGE_CONFIGURED,
   chatForProvider,
-  chatViaCodexAppServer,
   defaultAiSettings,
   resolveAiSettings,
-  streamViaCodexAppServer,
   streamForProvider,
-  usesCodexBridgeProvider,
   type AiChatRequest,
   type AiSettings,
   type AiStreamChunk,
@@ -53,6 +49,12 @@ import {
   type LegacyAiSettings,
   type StreamCallbacks,
 } from '@genoffice/ai-provider'
+import {
+  chatViaCodexAppServer,
+  CODEX_BRIDGE_CONFIGURED,
+  streamViaCodexAppServer,
+  usesCodexBridgeProvider,
+} from '@genoffice/ai-provider/codex-bridge'
 import {
   ensureGenofficeLogin,
   gskApiKey,

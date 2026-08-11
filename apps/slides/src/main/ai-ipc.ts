@@ -10,12 +10,9 @@ import { join } from 'node:path'
 import {
   AiCreditsError,
   AiTimeoutError,
-  CODEX_BRIDGE_CONFIGURED,
   defaultAiSettings,
   resolveAiSettings,
-  streamViaCodexAppServer,
   streamForProvider,
-  usesCodexBridgeProvider,
   type AiSettings,
   type AiStreamChunk,
   type AiStreamRequest,
@@ -23,6 +20,11 @@ import {
   type LegacyAiSettings,
   type StreamCallbacks,
 } from '@genoffice/ai-provider'
+import {
+  CODEX_BRIDGE_CONFIGURED,
+  streamViaCodexAppServer,
+  usesCodexBridgeProvider,
+} from '@genoffice/ai-provider/codex-bridge'
 import { fetchRemoteImage } from '@genoffice/electron-utils'
 import {
   webSearch,

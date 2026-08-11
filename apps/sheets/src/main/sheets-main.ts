@@ -52,14 +52,10 @@ import { ProjectStore } from '@genoffice/project-store'
 import {
   AiCreditsError,
   AiTimeoutError,
-  CODEX_BRIDGE_CONFIGURED,
   chatForProvider,
-  chatViaCodexAppServer,
   defaultAiSettings,
   resolveAiSettings,
-  streamViaCodexAppServer,
   streamForProvider,
-  usesCodexBridgeProvider,
   type AiProviderId,
   type AiSettings,
   type AiStreamChunk,
@@ -67,6 +63,12 @@ import {
   type LegacyAiSettings,
   type StreamCallbacks,
 } from '@genoffice/ai-provider'
+import {
+  chatViaCodexAppServer,
+  CODEX_BRIDGE_CONFIGURED,
+  streamViaCodexAppServer,
+  usesCodexBridgeProvider,
+} from '@genoffice/ai-provider/codex-bridge'
 import { csvToXlsxBuffer, decodeCsvBuffer } from '../gateway/csv-import'
 import {
   ensureGenofficeLogin,
