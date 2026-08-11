@@ -52,15 +52,20 @@ import { ProjectStore } from '@genoffice/project-store'
 import {
   AiCreditsError,
   AiTimeoutError,
+  CODEX_BRIDGE_CONFIGURED,
   chatForProvider,
+  chatViaCodexAppServer,
   defaultAiSettings,
   resolveAiSettings,
+  streamViaCodexAppServer,
   streamForProvider,
+  usesCodexBridgeProvider,
   type AiProviderId,
   type AiSettings,
   type AiStreamChunk,
   type GenSparkAccountStatus,
   type LegacyAiSettings,
+  type StreamCallbacks,
 } from '@genoffice/ai-provider'
 import { csvToXlsxBuffer, decodeCsvBuffer } from '../gateway/csv-import'
 import {
@@ -2130,15 +2135,17 @@ export function registerSheetsAiIpc(): void {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
     const openAiKey = openAiDevelopmentKey()
-    if (usesOpenAiDevelopmentProvider()) {
+    if (usesCodexBridgeProvider()) {
+      settings.provider = 'openai'
+      settings.providers.openai = { ...settings.providers.openai, apiKey: CODEX_BRIDGE_CONFIGURED }
+    } else if (usesOpenAiDevelopmentProvider()) {
       settings.provider = 'openai'
       settings.providers.openai = {
         ...settings.providers.openai,
         apiKey: openAiKey ? ENV_CONFIGURED_API_KEY : '',
       }
     } else {
-      // AI features all go through Genspark (gsk login); legacy settings that chose
-      // another provider are reset
+      // Explicit legacy provider mode; otherwise GenOffice uses the local Codex bridge by default.
       settings.provider = 'genspark'
     }
     return settings
@@ -2170,22 +2177,26 @@ export function registerSheetsAiIpc(): void {
     sessionFor(event)
     const request = aiChatRequestSchema.parse(input)
     const openAiKey = openAiDevelopmentKey()
-    const provider = (usesOpenAiDevelopmentProvider() ? 'openai' : request.settings.provider) as AiProviderId
+    const provider = (usesOpenAiDevelopmentProvider() || usesCodexBridgeProvider()
+      ? 'openai'
+      : request.settings.provider) as AiProviderId
     let config = request.settings.providers[provider]
     if (openAiKey && config) {
       config = { ...config, apiKey: openAiKey }
     } else if (provider === 'genspark' && config && !config.apiKey) {
       config = { ...config, apiKey: gskApiKey() }
     }
-    if (!config?.apiKey) {
+    if (!usesCodexBridgeProvider() && !config?.apiKey) {
       return {
         ok: false,
         error: provider === 'genspark' ? tm('errGskNotLoggedIn') : tm('errNoApiKey', { provider }),
       }
     }
-    if (!config.model) return { ok: false, error: tm('errNoModel') }
+    if (!usesCodexBridgeProvider() && !config?.model) return { ok: false, error: tm('errNoModel') }
     try {
-      return await chatForProvider(provider, config, request.system, request.user)
+      return usesCodexBridgeProvider()
+        ? await chatViaCodexAppServer(request.system, request.user)
+        : await chatForProvider(provider, config!, request.system, request.user)
     } catch (err) {
       return { ok: false, error: String(err) }
     }
@@ -2198,7 +2209,9 @@ export function registerSheetsAiIpc(): void {
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
     const openAiKey = openAiDevelopmentKey()
-    const provider = (usesOpenAiDevelopmentProvider() ? 'openai' : request.settings.provider) as AiProviderId
+    const provider = (usesOpenAiDevelopmentProvider() || usesCodexBridgeProvider()
+      ? 'openai'
+      : request.settings.provider) as AiProviderId
     let config = request.settings.providers[provider]
     if (openAiKey && config) {
       config = { ...config, apiKey: openAiKey }
@@ -2210,7 +2223,7 @@ export function registerSheetsAiIpc(): void {
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.aiStreamChunk, chunk)
     }
-    if (!config?.apiKey) {
+    if (!usesCodexBridgeProvider() && !config?.apiKey) {
       send({
         requestId,
         type: 'error',
@@ -2218,7 +2231,7 @@ export function registerSheetsAiIpc(): void {
       })
       return
     }
-    if (!config.model) {
+    if (!usesCodexBridgeProvider() && !config?.model) {
       send({ requestId, type: 'error', error: tm('errNoModel') })
       return
     }
@@ -2233,12 +2246,17 @@ export function registerSheetsAiIpc(): void {
       send({ requestId, type: 'ping' })
     }
     try {
-      await streamForProvider(provider, config, system, messages, tools, maxTokens, {
+      const callbacks: StreamCallbacks = {
         signal: controller.signal,
         onDelta: (text) => send({ requestId, type: 'delta', text }),
         onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
         onActivity: ping,
-      })
+      }
+      if (usesCodexBridgeProvider()) {
+        await streamViaCodexAppServer(system, messages, tools, callbacks)
+      } else {
+        await streamForProvider(provider, config!, system, messages, tools, maxTokens, callbacks)
+      }
       send({ requestId, type: 'done' })
     } catch (err) {
       if (controller.signal.aborted) {

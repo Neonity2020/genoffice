@@ -10,14 +10,18 @@ import { join } from 'node:path'
 import {
   AiCreditsError,
   AiTimeoutError,
+  CODEX_BRIDGE_CONFIGURED,
   defaultAiSettings,
   resolveAiSettings,
+  streamViaCodexAppServer,
   streamForProvider,
+  usesCodexBridgeProvider,
   type AiSettings,
   type AiStreamChunk,
   type AiStreamRequest,
   type GenSparkAccountStatus,
   type LegacyAiSettings,
+  type StreamCallbacks,
 } from '@genoffice/ai-provider'
 import { fetchRemoteImage } from '@genoffice/electron-utils'
 import {
@@ -76,14 +80,17 @@ export function registerAiIpc(): void {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(AI_SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
     const openAiKey = openAiDevelopmentKey()
-    if (usesOpenAiDevelopmentProvider()) {
+    if (usesCodexBridgeProvider()) {
+      settings.provider = 'openai'
+      settings.providers.openai = { ...settings.providers.openai, apiKey: CODEX_BRIDGE_CONFIGURED }
+    } else if (usesOpenAiDevelopmentProvider()) {
       settings.provider = 'openai'
       settings.providers.openai = {
         ...settings.providers.openai,
         apiKey: openAiKey ? ENV_CONFIGURED_API_KEY : '',
       }
     } else {
-      // AI features all go through Genspark (gsk login); stored settings that chose another provider are normalized back
+      // Explicit legacy provider mode; otherwise GenOffice uses the local Codex bridge by default.
       settings.provider = 'genspark'
     }
     return settings
@@ -113,7 +120,7 @@ export function registerAiIpc(): void {
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
     const openAiKey = openAiDevelopmentKey()
-    const provider = usesOpenAiDevelopmentProvider() ? 'openai' : settings.provider
+    const provider = usesOpenAiDevelopmentProvider() || usesCodexBridgeProvider() ? 'openai' : settings.provider
     let config = settings.providers?.[provider]
     if (openAiKey && config) {
       config = { ...config, apiKey: openAiKey }
@@ -124,7 +131,7 @@ export function registerAiIpc(): void {
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send('ai:stream-chunk', chunk)
     }
-    if (!config?.apiKey) {
+    if (!usesCodexBridgeProvider() && !config?.apiKey) {
       send({
         requestId,
         type: 'error',
@@ -132,7 +139,7 @@ export function registerAiIpc(): void {
       })
       return
     }
-    if (!config.model) {
+    if (!usesCodexBridgeProvider() && !config?.model) {
       send({ requestId, type: 'error', error: tm('errNoModel') })
       return
     }
@@ -147,12 +154,17 @@ export function registerAiIpc(): void {
       send({ requestId, type: 'ping' })
     }
     try {
-      await streamForProvider(provider, config, system, messages, tools, maxTokens, {
+      const callbacks: StreamCallbacks = {
         signal: controller.signal,
         onDelta: (text) => send({ requestId, type: 'delta', text }),
         onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
         onActivity: ping,
-      })
+      }
+      if (usesCodexBridgeProvider()) {
+        await streamViaCodexAppServer(system, messages, tools, callbacks)
+      } else {
+        await streamForProvider(provider, config!, system, messages, tools, maxTokens, callbacks)
+      }
       send({ requestId, type: 'done' })
     } catch (err) {
       if (controller.signal.aborted) {

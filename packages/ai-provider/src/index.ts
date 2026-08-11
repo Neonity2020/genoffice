@@ -17,6 +17,12 @@ export {
   resolveAiSettings,
 } from './providers'
 export { chatForProvider } from './chat'
+export {
+  chatViaCodexAppServer,
+  CODEX_BRIDGE_CONFIGURED,
+  streamViaCodexAppServer,
+  usesCodexBridgeProvider,
+} from './codex-bridge'
 export { AiCreditsError, sseLines, streamForProvider } from './stream'
 export type { StreamCallbacks } from './stream'
 export {

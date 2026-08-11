@@ -37,16 +37,21 @@ import { parseFileToText } from '@genoffice/file-parse'
 import {
   AiCreditsError,
   AiTimeoutError,
+  CODEX_BRIDGE_CONFIGURED,
   chatForProvider,
+  chatViaCodexAppServer,
   defaultAiSettings,
   resolveAiSettings,
+  streamViaCodexAppServer,
   streamForProvider,
+  usesCodexBridgeProvider,
   type AiChatRequest,
   type AiSettings,
   type AiStreamChunk,
   type AiStreamRequest,
   type GenSparkAccountStatus,
   type LegacyAiSettings,
+  type StreamCallbacks,
 } from '@genoffice/ai-provider'
 import {
   ensureGenofficeLogin,
@@ -2485,8 +2490,13 @@ export function registerAiIpc(): void {
   ipcMain.handle('ai:get-settings', (): AiSettings => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
-    // AI features all go through Genspark (gsk login); legacy settings with another provider are reset
-    settings.provider = 'genspark'
+    if (usesCodexBridgeProvider()) {
+      settings.provider = 'openai'
+      settings.providers.openai = { ...settings.providers.openai, apiKey: CODEX_BRIDGE_CONFIGURED }
+    } else {
+      // Explicit legacy provider mode; otherwise GenOffice uses the local Codex bridge by default.
+      settings.provider = 'genspark'
+    }
     return settings
   })
 
@@ -2513,7 +2523,7 @@ export function registerAiIpc(): void {
     const { requestId, settings, system, messages } = request
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? 8192
-    const provider = settings.provider
+    const provider = usesCodexBridgeProvider() ? 'openai' : settings.provider
     let config = settings.providers?.[provider]
     // the genspark key never enters the settings file; requests take it from the gsk login state
     if (provider === 'genspark' && config && !config.apiKey) {
@@ -2522,7 +2532,7 @@ export function registerAiIpc(): void {
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send('ai:stream-chunk', chunk)
     }
-    if (!config?.apiKey) {
+    if (!usesCodexBridgeProvider() && !config?.apiKey) {
       send({
         requestId,
         type: 'error',
@@ -2530,7 +2540,7 @@ export function registerAiIpc(): void {
       })
       return
     }
-    if (!config.model) {
+    if (!usesCodexBridgeProvider() && !config?.model) {
       send({ requestId, type: 'error', error: tm('errNoModel') })
       return
     }
@@ -2546,7 +2556,7 @@ export function registerAiIpc(): void {
     }
     try {
       let stopReason: string | undefined
-      await streamForProvider(provider, config, system, messages, tools, maxTokens, {
+      const callbacks: StreamCallbacks = {
         signal: controller.signal,
         onDelta: (text) => send({ requestId, type: 'delta', text }),
         onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
@@ -2554,7 +2564,12 @@ export function registerAiIpc(): void {
         onStopReason: (reason) => {
           stopReason = reason
         },
-      })
+      }
+      if (usesCodexBridgeProvider()) {
+        await streamViaCodexAppServer(system, messages, tools, callbacks)
+      } else {
+        await streamForProvider(provider, config!, system, messages, tools, maxTokens, callbacks)
+      }
       send({ requestId, type: 'done', stopReason })
     } catch (err) {
       if (controller.signal.aborted) {
@@ -2623,20 +2638,22 @@ export function registerAiIpc(): void {
 
   ipcMain.handle('ai:chat', async (_event, request: AiChatRequest) => {
     const { settings, system, user } = request
-    const provider = settings.provider
+    const provider = usesCodexBridgeProvider() ? 'openai' : settings.provider
     let config = settings.providers?.[provider]
     if (provider === 'genspark' && config && !config.apiKey) {
       config = { ...config, apiKey: gskApiKey() }
     }
-    if (!config?.apiKey) {
+    if (!usesCodexBridgeProvider() && !config?.apiKey) {
       return {
         ok: false,
         error: provider === 'genspark' ? tm('errGskNotLoggedIn') : tm('errNoApiKey', { provider }),
       }
     }
-    if (!config.model) return { ok: false, error: tm('errNoModel') }
+    if (!usesCodexBridgeProvider() && !config?.model) return { ok: false, error: tm('errNoModel') }
     try {
-      return await chatForProvider(provider, config, system, user)
+      return usesCodexBridgeProvider()
+        ? await chatViaCodexAppServer(system, user)
+        : await chatForProvider(provider, config!, system, user)
     } catch (err) {
       return { ok: false, error: String(err) }
     }
