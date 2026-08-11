@@ -69,6 +69,8 @@ export interface DeckAccess {
   applySlide(slideIndex: number, updated: RenderSlide): void
   /** Replace the whole deck (after adding/removing slides) and jump to the goTo slide */
   applyDeck(slides: RenderSlide[], goTo?: number): void
+  /** Local editable deck template writer; used when cloud slide generation is unavailable. */
+  generateNativeDeck?(pages: Array<Record<string, unknown>>, deckName: string): Promise<{ ok: boolean; done: number; error?: string }>
   /**
    * Generation progress callback (optional): called by generate_deck stages; the UI updates
    * the progress card and top progress bar in real time. Passed only through renderer
@@ -2357,10 +2359,13 @@ async function executeTool(
       // ── Self-driven pipeline:
       //   1) Plan: use pages if passed; with topic, the tool plans the outline via LLM (batched recursion over threshold) — fixes missing pages at the input side.
       //   2) Generate: batched concurrent cloud page generation (gsk slide_generate, one retry per page), **each batch lands immediately → frontend shows pages one by one**.
-      if (!access.generatePageCloud || !(await access.isCloudPageGenEnabled?.().catch(() => false)))
+      if (
+        !access.generateNativeDeck &&
+        (!access.generatePageCloud || !(await access.isCloudPageGenEnabled?.().catch(() => false)))
+      )
         return fail(
           t('aiFailGenDeck'),
-          'Cloud slide generation is unavailable — sign in to Genspark (gsk) first',
+          'No local or cloud slide generator is available',
         )
       if (!access.generateFromHtml)
         return fail(
@@ -2666,6 +2671,18 @@ async function executeTool(
       // Presentation name: prefer the cover (page 1) title, then the user-entered topic / coreHook.
       // New drafts are saved under this name instead of "Untitled-timestamp".
       const deckName = String(pages[0]?.title ?? '').trim() || topic || coreHook
+
+      if (access.generateNativeDeck) {
+        const native = await access.generateNativeDeck(pages, deckName)
+        if (!native.ok) return fail(t('aiFailGenDeck'), native.error ?? 'Local deck generation failed')
+        if (state?.pageDone) state.pageDone.fill(true)
+        access.onProgress?.({ stage: 'done', total, summary: `${native.done}/${total} pages generated locally` })
+        return {
+          output: `Generated ${native.done}/${total} editable slides locally without cloud slide generation.`,
+          mutated: true,
+          summary: t('aiSumDeckGenerated', { done: native.done, total }),
+        }
+      }
 
       // ── Step 2: generate page by page + land as we go (frontend shows pages one by one).
       // The cloud service (gsk slide_generate) writes each page's HTML and converts it to a

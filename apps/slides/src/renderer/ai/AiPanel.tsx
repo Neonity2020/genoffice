@@ -820,6 +820,38 @@ export function AiPanel({
       getSelectedIds: () => selectedRef.current,
       applySlide: (i, updated) => applySlideRef.current(i, updated),
       applyDeck: (all, goTo) => applyDeckRef.current(all, goTo),
+      generateNativeDeck: async (pages, _deckName) => {
+        try {
+          let target = 0
+          for (let i = 0; i < pages.length; i++) {
+            if (i > 0) {
+              const added = await window.slidesApi.addBlankSlide({
+                sourceIndex: Math.max(0, slidesRef.current.length - 1),
+                fitWidthPx,
+              })
+              if (!added) throw new Error('Could not create a slide')
+              applyDeckRef.current(added.slides, added.index)
+              target = added.index
+            }
+            const page = pages[i]!
+            const title = String(page.title ?? `Page ${i + 1}`)
+            const brief = String(page.brief ?? '')
+            const add = async (kind: string, xPx: number, yPx: number, wPx: number, hPx: number, text?: string, fillColor?: string) => {
+              const r = await window.slidesApi.addElement({ slideIndex: target, kind, xPx, yPx, wPx, hPx, fitWidthPx, ...(text ? { text } : {}), ...(fillColor ? { fillColor } : {}) })
+              if (!r) throw new Error('Could not add slide element')
+              applySlideRef.current(target, r.slide)
+            }
+            await add('rect', 0, 0, 1280, 720, undefined, i === 0 ? '#102A43' : '#FFFFFF')
+            await add('textbox', 72, 64, 1136, 90, title)
+            await add('rect', 72, 180, 1136, 390, undefined, '#F1F5F9')
+            await add('textbox', 104, 218, 1072, 300, brief)
+            await add('textbox', 72, 650, 500, 28, `${i + 1} / ${pages.length}`)
+          }
+          return { ok: true, done: pages.length }
+        } catch (error) {
+          return { ok: false, done: 0, error: error instanceof Error ? error.message : String(error) }
+        }
+      },
       generateFromHtml: async (
         pagesHtml: string[],
         mode?: 'replace' | 'append' | 'insert_at',
