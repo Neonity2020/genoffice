@@ -836,15 +836,36 @@ export function AiPanel({
             const page = pages[i]!
             const title = String(page.title ?? `Page ${i + 1}`)
             const brief = String(page.brief ?? '')
+            const designPrompt = [
+              'Return JSON only: {"kicker":"","headline":"","summary":"","cards":[{"label":"","value":"","detail":""}]} .',
+              'Create concise Chinese executive-slide copy. Use 3 cards. Do not invent numerical facts; when figures are absent use qualitative values.',
+              `Slide title: ${title}`,
+              `Brief: ${brief}`,
+            ].join('\n')
+            const designed = await runLlmOnce('You are a presentation content designer.', designPrompt, IPC_STREAM_SILENCE_TIMEOUT_MS, true, undefined, 1800)
+            let spec: { kicker?: string; headline?: string; summary?: string; cards?: Array<{ label?: string; value?: string; detail?: string }> } = {}
+            try { spec = JSON.parse(designed.text ?? '{}') as typeof spec } catch { /* use the supplied plan below */ }
+            const cards = (spec.cards ?? []).slice(0, 3)
+            while (cards.length < 3) cards.push({ label: i === 0 ? '管理要点' : '关键事项', value: '', detail: brief })
             const add = async (kind: string, xPx: number, yPx: number, wPx: number, hPx: number, text?: string, fillColor?: string) => {
               const r = await window.slidesApi.addElement({ slideIndex: target, kind, xPx, yPx, wPx, hPx, fitWidthPx, ...(text ? { text } : {}), ...(fillColor ? { fillColor } : {}) })
               if (!r) throw new Error('Could not add slide element')
               applySlideRef.current(target, r.slide)
             }
-            await add('rect', 0, 0, 1280, 720, undefined, i === 0 ? '#102A43' : '#FFFFFF')
-            await add('textbox', 72, 64, 1136, 90, title)
-            await add('rect', 72, 180, 1136, 390, undefined, '#F1F5F9')
-            await add('textbox', 104, 218, 1072, 300, brief)
+            const dark = i === 0
+            await add('rect', 0, 0, 1280, 720, undefined, dark ? '#0B1F3A' : '#F8FAFC')
+            await add('rect', 72, 58, 90, 8, undefined, '#2F80ED')
+            await add('textbox', 72, 86, 1090, 34, spec.kicker || `项目季度汇报 · ${i + 1}`)
+            await add('textbox', 72, 138, 1090, 82, spec.headline || title)
+            await add('textbox', 72, 242, 1050, 68, spec.summary || brief.slice(0, 150))
+            for (let c = 0; c < 3; c++) {
+              const card = cards[c]!
+              const x = 72 + c * 378
+              await add('roundRect', x, 360, 342, 208, undefined, dark ? '#173A63' : '#FFFFFF')
+              await add('textbox', x + 26, 388, 290, 30, String(card.label ?? '关键事项'))
+              await add('textbox', x + 26, 432, 290, 54, String(card.value ?? ''))
+              await add('textbox', x + 26, 500, 290, 46, String(card.detail ?? ''))
+            }
             await add('textbox', 72, 650, 500, 28, `${i + 1} / ${pages.length}`)
           }
           const saved = await window.slidesApi.save()
