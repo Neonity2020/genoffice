@@ -129,6 +129,22 @@ export interface DeckAccess {
     canvasH: number
     signal?: AbortSignal
   }): Promise<{ ok: boolean; marker?: string; error?: string }>
+  /** Local page writer: uses the configured LLM to produce HTML, then the existing local PPTX converter. */
+  generatePageHtml?(args: {
+    pageIndex: number
+    totalPages: number
+    coreHook: string
+    style: string
+    title: string
+    brief: string
+    layout: string
+    images: string[]
+    context?: string
+    topic?: string
+    canvasW: number
+    canvasH: number
+    signal?: AbortSignal
+  }): Promise<{ ok: boolean; html?: string; error?: string }>
   /**
    * In-tool Style Skill generation:
    * a dedicated LLM call focused on producing a complete structured visual style guide
@@ -2357,10 +2373,11 @@ async function executeTool(
       // ── Self-driven pipeline:
       //   1) Plan: use pages if passed; with topic, the tool plans the outline via LLM (batched recursion over threshold) — fixes missing pages at the input side.
       //   2) Generate: batched concurrent cloud page generation (gsk slide_generate, one retry per page), **each batch lands immediately → frontend shows pages one by one**.
-      if (!access.generatePageCloud || !(await access.isCloudPageGenEnabled?.().catch(() => false)))
+      const localPageWriter = access.generatePageHtml
+      if (!localPageWriter && (!access.generatePageCloud || !(await access.isCloudPageGenEnabled?.().catch(() => false))))
         return fail(
           t('aiFailGenDeck'),
-          'Cloud slide generation is unavailable — sign in to Genspark (gsk) first',
+          'No slide page generator is available',
         )
       if (!access.generateFromHtml)
         return fail(
@@ -2728,7 +2745,7 @@ async function executeTool(
         for (let attempt = 0; attempt < 2; attempt++) {
           if (cancelled()) return null
           if (attempt > 0 && BACKOFF_MS > 0) await new Promise((r) => setTimeout(r, BACKOFF_MS))
-          const res = await access.generatePageCloud!({
+          const pageArgs = {
             pageIndex,
             totalPages: total,
             coreHook,
@@ -2742,10 +2759,16 @@ async function executeTool(
             canvasW,
             canvasH,
             ...(signal ? { signal } : {}),
-          })
-          if (res.ok && res.marker) {
+          }
+          const localResult = localPageWriter ? await localPageWriter(pageArgs) : undefined
+          const cloudResult = localPageWriter
+            ? undefined
+            : await access.generatePageCloud!(pageArgs)
+          const res = localResult ?? cloudResult!
+          const html = localResult?.html ?? cloudResult?.marker
+          if (res.ok && html) {
             pageErrors[pageIndex - 1] = undefined
-            return res.marker
+            return html
           }
           lastErr = res.error ?? t('aiErrUnknown')
         }
